@@ -1,0 +1,18 @@
+replication with binlog and relay log
+
+===== create slave =======
+1. Stop Slave;
+2. Reset Slave;
+3.
+   CHANGE MASTER TO 
+  MASTER_HOST = 'Master_IP_Address', 
+  MASTER_USER = 'your_Master_user', // usually the "root" user
+  MASTER_PASSWORD = 'Your_MasterDB_Password', 
+  MASTER_PORT = 3306, 
+  MASTER_LOG_FILE = 'mysql-bin.000001', 
+  MASTER_LOG_POS = 98; // In this case
+
+4. start slave;
+5. Check Slave And Master
+- show slave status\G;
+- show master status\G;

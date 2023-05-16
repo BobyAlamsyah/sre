@@ -1,0 +1,115 @@
+=================== Persiapkan Docker Image =====================
+docker pull postgres
+
+=================== Buat 2 Container untuk Master dan Slave ============
+1. Buat Container Master :
+docker run -p 5432:5432 -d -v /var/container/postgres_master:/var/lib/postgresql/data -e POSTGRES_USER=root -e POSTGRES_PASSWORD=pwd123 -e POSTGRES_DB=postgres --name db_master postgres:latest
+
+2. Buat Container Slave :
+docker run -p -p 5432:5432 -d -v /var/container/postgres_slave:/var/lib/postgresql/data -e POSTGRES_USER=root -e POSTGRES_PASSWORD=pwd123 -e POSTGRES_DB=postgres --name db_slave postgres:latest
+
+3. Pastikan masing2 node bisa telnet ke port 5432 secara bolak - balik.
+
+====================== Setting Master ======================
+1. Masuk ke container master :
+docker container exec -it db_master bash
+
+2. Edit file postgresql.conf 
+   parameter berikut:
+   
+   listen_address='*'
+   wal_level = replica 
+   max_wal_senders = 3 (disesuaikan kebutuhan)
+   wal_keep_segments = 64
+   hot_standby=on
+   
+   ==optional==
+   archive_mode=on
+   archive_command= 'command rsync'
+
+2. Buat user replicate and set password replicate:replicate123
+   a. Create Role replicate with replication login;
+   b. set password_encryption = 'scram-sha-256';
+   c. \password replicate
+
+3. Edit file pg_hba.conf, tambahkan slave nya untuk allow connection
+
+    === before ===
+    # TYPE  DATABASE        USER            ADDRESS                 METHOD
+    # "local" is for Unix domain socket connections only
+    local   all             all                                     peer
+    # IPv4 local connections:
+    host    all             all             0.0.0.0/0               trust
+    # IPv6 local connections:
+    host    all             all             ::1/128                 ident
+    # Allow replication connections from localhost, by a user with the
+    # replication privilege.
+    #local   replication     postgres                                peer
+    #host    replication     postgres        127.0.0.1/32            ident
+    #host    replication     postgres        ::1/128                 ident
+
+    === after === (sesuaikan ip address slave)
+    # TYPE  DATABASE        USER            ADDRESS                 METHOD
+    # "local" is for Unix domain socket connections only
+    local   all             all                                     peer
+    # IPv4 local connections:
+    host    all             all             0.0.0.0/0               trust
+    # IPv6 local connections:
+    host    all             all             ::1/128                 ident
+    # Allow replication connections from localhost, by a user with the
+    # replication privilege.
+    local   replication     all                                trust
+    host    replication     all        0.0.0.0/0              trust
+    host    replication     all        ::1/128                 trust
+
+    host    replication     replicate   192.168.56.103/24         password
+
+4. restart postgresql master
+   systemctl restart postgresql 
+
+======================================= Setting Slave =========================================
+
+1. backup untuk sync ke slave dg pg_basebackup
+
+   pg_basebackup -h ip address master -U user replica -p nomor_port -D datadir
+   
+   contoh:
+   pg_basebackup -h 192.168.56.102 -U replicate -p 5432 -D /var/lib/pgsql/data
+
+2. buat file recovery.conf / kalo postgres 14 sudah otomatis ada file signal dan config  primary_conninfo ada di file postgresql.auto.conf yg terbentuk otomatis.
+   isi dengan :
+
+    standby_mode          = 'on'
+    primary_conninfo      = 'host=172.17.0.2 port=5432 user=replicate password=MySuperPassword'
+    trigger_file = '/tmp/MasterNow'
+    #restore_command = 'cp /home/postgresql_wal/%f "%p"'
+
+    note:
+    untuk debian, ubuntu taruh file recovery.conf nya di data dir, bukan di config etc
+
+3. edit file postgresql.conf , ganti parameter / skip di postgresql 14 krn sudah otomatis
+  hot_standby=on
+  listen_address='*'
+   wal_level = replica / untuk postgres 9.2 ubah ke hot_standby
+   max_wal_senders = 3 (disesuaikan kebutuhan)
+   wal_keep_segments = 64
+
+4. edit pg_hba.conf, tambahkan ip master.
+
+5. restart service postgres
+
+10. testing create database on master
+   create database replicatetesting;
+
+11. query check replication
+   on master :
+   select * from pg_stat_replication;
+
+   on slave:
+   select * from pg_stat_wal_receiver; 
+
+   postgres=# select pg_is_in_recovery();
+   pg_is_in_recovery 
+   -------------------
+   t
+   (1 row)
